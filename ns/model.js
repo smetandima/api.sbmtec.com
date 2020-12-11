@@ -7,11 +7,67 @@ const CONFIG = {
   server: process.env.DB_HOST,
   database: 'meetfresh'
 }
-
-exports.getCustomerInfo = async function(offset, limit, period, shop, search_key) {
+exports.getCustomerVisitsCount = async function(period, shop) {
   let shop_filter = ''
-  if(shop !== 'all'){
-    shop_filter = `and s.description = '${shop}'`
+  if(shop.length === 1){
+    shop_filter = `and s.description = '${shop[0]}'` // Single shop filter
+  }else{
+    let shops = ``;
+    shop.forEach(item => {
+      shops += `'${item}',`
+    })
+    shops = shops.slice(0, -1) // Remove tailing ,
+    shop_filter = `and s.description in (${shops})` // Multi shop filter
+  }
+  try{
+    let pool = await sql.connect(CONFIG)
+    let result = await pool.request()
+      .input('from', sql.VarChar, period.from)
+      .input('to', sql.VarChar, period.to)
+      .query(`
+        select total.shop_name, total.all_count, tsm.tsm_count, gfo.gfo_count
+          from (
+        	select count(*) all_count, max(s.description) shop_name, s.id id
+        	from transactions t
+        	join shops s on s.id = t.shop_id
+        	where t.bookkeeping_date between @from and @to
+            ${shop_filter}
+        	group by s.id) total
+        left join (
+        	select count(*) tsm_count, max(s.description) shop_name, s.id id
+        	from transactions t
+        	join shops s on s.id = t.shop_id
+        	join trans_spoonity_member tsm on t.id = tsm.transaction_id
+        	where t.bookkeeping_date between @from and @to
+            ${shop_filter}
+        	group by s.id
+        ) tsm on tsm.id = total.id
+        left join (
+        	select count(*) gfo_count, max(s.description) shop_name, s.id id
+        	from transactions t
+        	join shops s on s.id = t.shop_id
+        	join global_food_order gfo on t.global_food_order_id = gfo.id
+        	where t.bookkeeping_date between @from and @to
+            ${shop_filter}
+        	group by s.id
+        ) gfo on gfo.id = tsm.id
+      `)
+    return result
+  }catch(err){
+    return err
+  }
+}
+exports.getCustomerVisitInfo = async function(offset, limit, period, shop, search_key) {
+  let shop_filter = ''
+  if(shop.length === 1){
+    shop_filter = `and s.description = '${shop[0]}'` // Single shop filter
+  }else{
+    let shops = ``;
+    shop.forEach(item => {
+      shops += `'${item}',`
+    })
+    shops = shops.slice(0, -1) // Remove tailing ,
+    shop_filter = `and s.description in (${shops})` // Multi shop filter
   }
   try{
     let pool = await sql.connect(CONFIG)
@@ -29,7 +85,8 @@ exports.getCustomerInfo = async function(offset, limit, period, shop, search_key
           tsm.phone phone,
           max(bookkeeping_date) last_visit,
           concat(max(tsm.first_name),' ',max(tsm.last_name)) name,
-          count(*) visit_count
+          count(*) visit_count,
+          max(s.description) shop_name
         from transactions t
           join trans_spoonity_member tsm on t.id = tsm.transaction_id
           join shops s on s.id = t.shop_id
@@ -45,7 +102,8 @@ exports.getCustomerInfo = async function(offset, limit, period, shop, search_key
       	  ltrim(replace(replace(replace(gfo.client_phone,'+1',''),'-',''),'+ 1','')) phone,
           max(bookkeeping_date) last_visit,
           concat(max(gfo.client_first_name),' ',max(gfo.client_last_name)) name,
-          count(*) visit_count
+          count(*) visit_count,
+          max(s.description) shop_name
         from transactions t
           join global_food_order gfo on t.global_food_order_id = gfo.id
           join shops s on s.id = t.shop_id
