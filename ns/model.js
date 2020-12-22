@@ -85,7 +85,7 @@ exports.getCustomerVisitsCountByDate = async function(period, shop) {
         	group by s.id, CAST(t.bookkeeping_date as date)) total
         left join (
         	select count(*) tsm_count, max(s.description) shop_name, s.id id, CAST(t.bookkeeping_date as date) d
-        	from transactions t 
+        	from transactions t
         	join shops s on s.id = t.shop_id
         	join trans_spoonity_member tsm on t.id = tsm.transaction_id
         	where t.bookkeeping_date between @from and @to
@@ -159,6 +159,7 @@ exports.getCustomerVisitsCountCompare = async function(period, shop) {
     return err
   }
 }
+
 exports.getCustomerVisitInfo = async function(offset, limit, customer_type, shop, search_key) {
   let shop_filter = ''
   if(shop.length === 1){
@@ -173,116 +174,109 @@ exports.getCustomerVisitInfo = async function(offset, limit, customer_type, shop
   }
   let all_query = `
     select
-      tsm.clover_id spoonity_id,
-    null gfo_id,
-      tsm.email email,
-      tsm.phone phone,
-    max(tsm.birth_day) birthday,
-    ISNULL(datediff(day, GETDATE(), max(tsm.birth_day)), -999) days_remaining_until_birthday,
+      max(spoonity_id) spoonity_id,
+      max(gfo_id) gfo_id,
+      max(email) email,
+      phone,
+      max(birthday) birthday,
+      ISNULL(datediff(day, GETDATE(), max(birthday)), -999) days_remaining_until_birthday,
       max(bookkeeping_date) last_visit,
-    min(bookkeeping_date) first_visit,
-    datediff(day, max(bookkeeping_date), GETDATE()) last_visit_days_ago,
-    ISNULL(count(*) * 1.0 / NULLIF(datediff(week, min(bookkeeping_date), max(bookkeeping_date)), 0), count(*)) visit_ratio,
-      concat(max(tsm.first_name),' ',max(tsm.last_name)) name,
+      min(bookkeeping_date) first_visit,
+      datediff(day, max(bookkeeping_date), GETDATE()) last_visit_days_ago,
+      ISNULL(count(*) * 1.0 / NULLIF(datediff(week, min(bookkeeping_date), max(bookkeeping_date)), 0), count(*)) visit_ratio,
+      max(name) name,
       count(*) visit_count
-    from transactions t
+    from(
+      select
+        tsm.clover_id spoonity_id,
+        null gfo_id,
+        tsm.email email,
+        tsm.phone phone,
+        tsm.birth_day birthday,
+        t.bookkeeping_date,
+        concat(tsm.first_name,' ',tsm.last_name) name
+      from transactions t
         join trans_spoonity_member tsm on t.id = tsm.transaction_id
-      join shops s on s.id = t.shop_id
-    where t.delete_timestamp is null
-      ${shop_filter}
-    group by tsm.clover_id,tsm.phone,tsm.email
+        join shops s on s.id = t.shop_id
+      where t.delete_timestamp is null
+        ${shop_filter}
+      union all
+      select
+        clover_id spoonity_id,
+        gfo.id gfo_id,
+        null email,
+        ltrim(replace(replace(replace(gfo.client_phone,'+1',''),'-',''),'+ 1','')) phone,
+        null birthday,
+        t.bookkeeping_date,
+        null name
+      from transactions t
+        join global_food_order gfo on t.global_food_order_id = gfo.id
+        join shops s on s.id = t.shop_id
+        join(
+          select distinct phone,clover_id from trans_spoonity_member
+        ) p1 on ltrim(replace(replace(replace(gfo.client_phone,'+1',''),'-',''),'+ 1','')) = p1.phone
+      where t.delete_timestamp is null
+        ${shop_filter}
+      union all
+      select
+        clover_id spoonity_id,
+        null gfo_id,
+        null email,
+        ltrim(replace(replace(replace(t.bandwidth_phone,'+1',''),'-',''),'+ 1','')) phone,
+        null birthday,
+        t.bookkeeping_date,
+        null name
+      from transactions t with(index (trans_band_phone_idx))
+        join shops s on s.id = t.shop_id and (t.spoonity_member is null or t.spoonity_member='')
+        join(
+          select distinct phone,first_name,clover_id from trans_spoonity_member
+        ) p1 on t.bandwidth_phone is not null and t.bandwidth_phone <> '' and ltrim(replace(replace(replace(t.bandwidth_phone,'+1',''),'-',''),'+ 1','')) = p1.phone
+      where t.delete_timestamp is null
+        ${shop_filter}
+      ) T group by T.phone,T.spoonity_id
     union all
     select
-        null spoonity_id,
+      null spoonity_id,
       max(gfo.id) gfo_id,
-        gfo.client_email email,
+      gfo.client_email email,
       ltrim(replace(replace(replace(gfo.client_phone,'+1',''),'-',''),'+ 1','')) phone,
       null birthday,
       null days_remaining_until_birthday,
-        max(bookkeeping_date) last_visit,
+      max(bookkeeping_date) last_visit,
       min(bookkeeping_date) first_visit,
       datediff(day, max(bookkeeping_date), GETDATE()) last_visit_days_ago,
       ISNULL(count(*) * 1.0 / NULLIF(datediff(week, min(bookkeeping_date), max(bookkeeping_date)), 0), count(*)) visit_ratio,
-        concat(max(gfo.client_first_name),' ',max(gfo.client_last_name)) name,
-        count(*) visit_count
-    from transactions t
-        join global_food_order gfo on t.global_food_order_id = gfo.id
-      join shops s on s.id = t.shop_id
-    where t.delete_timestamp is null
-      ${shop_filter}
-    group by ltrim(replace(replace(replace(gfo.client_phone,'+1',''),'-',''),'+ 1','')), gfo.client_email
-    order by visit_count desc, max(bookkeeping_date) desc
-    OFFSET @offset ROWS
-    FETCH NEXT @limit ROWS ONLY
-  `
-  let spoonity_query = `
-    select
-      tsm.clover_id spoonity_id,
-    null gfo_id,
-      tsm.email email,
-      tsm.phone phone,
-    max(tsm.birth_day) birthday,
-    ISNULL(datediff(day, GETDATE(), max(tsm.birth_day)), -999) days_remaining_until_birthday,
-      max(bookkeeping_date) last_visit,
-    min(bookkeeping_date) first_visit,
-    datediff(day, max(bookkeeping_date), GETDATE()) last_visit_days_ago,
-    ISNULL(count(*) * 1.0 / NULLIF(datediff(week, min(bookkeeping_date), max(bookkeeping_date)), 0), count(*)) visit_ratio,
-      concat(max(tsm.first_name),' ',max(tsm.last_name)) name,
+      concat(max(gfo.client_first_name),' ',max(gfo.client_last_name)) name,
       count(*) visit_count
     from transactions t
-        join trans_spoonity_member tsm on t.id = tsm.transaction_id
+      join global_food_order gfo on t.global_food_order_id = gfo.id
       join shops s on s.id = t.shop_id
+      left join
+      (
+        select distinct phone from trans_spoonity_member
+      ) p1 on ltrim(replace(replace(replace(gfo.client_phone,'+1',''),'-',''),'+ 1','')) = p1.phone
     where t.delete_timestamp is null
       ${shop_filter}
-    group by tsm.clover_id,tsm.phone,tsm.email
-    order by visit_count desc, max(bookkeeping_date) desc
-    OFFSET @offset ROWS
-    FETCH NEXT @limit ROWS ONLY
-  `
-  let gfo_query = `
-    select
-        null spoonity_id,
-      max(gfo.id) gfo_id,
-        gfo.client_email email,
-      ltrim(replace(replace(replace(gfo.client_phone,'+1',''),'-',''),'+ 1','')) phone,
-      null birthday,
-      null days_remaining_until_birthday,
-        max(bookkeeping_date) last_visit,
-      min(bookkeeping_date) first_visit,
-      datediff(day, max(bookkeeping_date), GETDATE()) last_visit_days_ago,
-      ISNULL(count(*) * 1.0 / NULLIF(datediff(week, min(bookkeeping_date), max(bookkeeping_date)), 0), count(*)) visit_ratio,
-        concat(max(gfo.client_first_name),' ',max(gfo.client_last_name)) name,
-        count(*) visit_count
-    from transactions t
-        join global_food_order gfo on t.global_food_order_id = gfo.id
-      join shops s on s.id = t.shop_id
-    where t.delete_timestamp is null
-      ${shop_filter}
+      and p1.phone is null
     group by ltrim(replace(replace(replace(gfo.client_phone,'+1',''),'-',''),'+ 1','')), gfo.client_email
+
     order by visit_count desc, max(bookkeeping_date) desc
-    OFFSET @offset ROWS
+    OFFSET @offset rows
     FETCH NEXT @limit ROWS ONLY
   `
-  let run_query = ''
-  if(customer_type == 'all'){
-    run_query = all_query
-  }else if(customer_type == 'spoonity'){
-    run_query = spoonity_query
-  }else{
-    run_query = gfo_query
-  }
   try{
     let pool = await sql.connect(CONFIG)
     let result = await pool.request()
       .input('offset', sql.Int, offset)
       .input('limit', sql.Int, limit)
       // .input('search_key', sql.String, search_key)
-      .query(run_query)
+      .query(all_query)
     return result
   }catch(err){
     return err
   }
 }
+
 exports.getAllTimeVisitCount = async function(shop) {
   let shop_filter = ''
   if(shop.length === 1){
@@ -375,6 +369,7 @@ exports.getAllCustomersCount = async function(shop) {
     return err
   }
 }
+
 exports.getTopSaleItems = async function(shop, period, offset, limit) {
   let shop_filter = ''
   if(shop.length === 1){
@@ -397,36 +392,50 @@ exports.getTopSaleItems = async function(shop, period, offset, limit) {
       .query(`
         select
         t.description,
-        sum(qty) 'qty',
-        sum(price) 'price'
+        sum(qty) 'qty'
         from
         (
+        	 --ÒÔÏÂÊÇspoonityµÄÊý¾Ý
         	select
         	a.description,
-        	sum(ta.qty_weight) qty,
-          sum(ta.price) price
+        	sum(ta.qty_weight) qty
         	 from trans_spoonity_member tsm
         	join transactions t on tsm.transaction_id  = t.id
         	join trans_articles ta on t.id = ta.transaction_id and ta.delete_timestamp is null
         	join articles a on ta.article_id = a.id
         	join shops s on s.id = t.shop_id
         	where t.delete_timestamp is null
-        		and t.bookkeeping_date between @from and @to
+        		and t.bookkeeping_date = '2020-12-14'
         		and a.article_type = '1'
         		${shop_filter}
         	group by a.description
         	UNION ALL
         	select
+        		a.description,
+        		sum(ta.qty_weight) qty
+        	from transactions t with(index (trans_band_phone_idx))
+        		join shops s on s.id = t.shop_id and (t.spoonity_member is null or t.spoonity_member='')
+        		join trans_articles ta on t.id = ta.transaction_id and ta.delete_timestamp is null
+        		join articles a on ta.article_id = a.id
+        		join(
+        			select distinct phone,first_name from trans_spoonity_member
+        		) p1 on t.bandwidth_phone is not null and t.bandwidth_phone <> '' and ltrim(replace(replace(replace(t.bandwidth_phone,'+1',''),'-',''),'+ 1','')) = p1.phone
+        	where t.delete_timestamp is null
+        	and t.bookkeeping_date = '2020-12-14'
+        	${shop_filter}
+        	group by a.description
+        	UNION ALL
+        	  --ÒÔÏÂÊÇGFµÄÊý¾Ý
+        	select
         	a.description,
-        	sum(ta.qty_weight) qty,
-          sum(ta.price) price
+        	sum(ta.qty_weight) qty
         	from transactions t
         	join global_food_order gfo on t.global_food_order_id = gfo.id
         	join trans_articles ta on t.id = ta.transaction_id and ta.delete_timestamp is null
         	join articles a on ta.article_id = a.id
         	join shops s on s.id = t.shop_id
         	where t.delete_timestamp is null
-        		and t.bookkeeping_date between @from and @to
+        		and t.bookkeeping_date = '2020-12-14'
         		and a.article_type = '1'
         		${shop_filter}
         	group by a.description
