@@ -405,7 +405,7 @@ exports.getTopSaleItems = async function(shop, period, offset, limit) {
         	join articles a on ta.article_id = a.id
         	join shops s on s.id = t.shop_id
         	where t.delete_timestamp is null
-        		and t.bookkeeping_date = '2020-12-14'
+        		and t.bookkeeping_date between @from and @to
         		and a.article_type = '1'
         		${shop_filter}
         	group by a.description
@@ -421,7 +421,7 @@ exports.getTopSaleItems = async function(shop, period, offset, limit) {
         			select distinct phone,first_name from trans_spoonity_member
         		) p1 on t.bandwidth_phone is not null and t.bandwidth_phone <> '' and ltrim(replace(replace(replace(t.bandwidth_phone,'+1',''),'-',''),'+ 1','')) = p1.phone
         	where t.delete_timestamp is null
-        	and t.bookkeeping_date = '2020-12-14'
+        	and t.bookkeeping_date between @from and @to
         	${shop_filter}
         	group by a.description
         	UNION ALL
@@ -435,7 +435,7 @@ exports.getTopSaleItems = async function(shop, period, offset, limit) {
         	join articles a on ta.article_id = a.id
         	join shops s on s.id = t.shop_id
         	where t.delete_timestamp is null
-        		and t.bookkeeping_date = '2020-12-14'
+        		and t.bookkeeping_date between @from and @to
         		and a.article_type = '1'
         		${shop_filter}
         	group by a.description
